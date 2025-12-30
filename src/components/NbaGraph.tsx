@@ -222,7 +222,7 @@ export default function NbaGraph({ initialPlayerId }: NbaGraphProps) {
     if (graphNode.type === 'player' && graphNode.playerId === playerId) {
       return '#10b981'; // Green for main player
     }
-    return graphNode.type === 'player' ? '#3b82f6' : '#ef4444'; // Blue for players, red for seasons
+    return graphNode.type === 'player' ? '#2563eb' : '#dc2626'; // Bright blue for players, bright red for seasons
   }, [playerId]);
 
   const nodeLabel = useCallback((node: any) => {
@@ -239,7 +239,7 @@ export default function NbaGraph({ initialPlayerId }: NbaGraphProps) {
   }
 
   return (
-    <div className="w-full h-screen relative">
+    <div className="w-full h-screen relative bg-white">
       <ForceGraph2D
         graphData={{ nodes, links }}
         onNodeClick={handleNodeClick}
@@ -248,39 +248,49 @@ export default function NbaGraph({ initialPlayerId }: NbaGraphProps) {
         linkDirectionalArrowLength={6}
         linkDirectionalArrowRelPos={1}
         linkCurvature={0.15}
+        linkColor={() => 'rgba(100, 100, 100, 0.6)'}
+        backgroundColor="rgba(249, 250, 251, 0)"
         nodeCanvasObjectMode={() => 'after'}
         nodeCanvasObject={(node, ctx, globalScale) => {
-          const label = nodeLabel(node as GraphNode);
-          const fontSize = 12 / globalScale;
-          ctx.font = `${fontSize}px Sans-Serif`;
+          const graphNode = node as GraphNode;
+          const label = nodeLabel(graphNode);
+          const fontSize = 14 / globalScale;
+          ctx.font = `bold ${fontSize}px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`;
           ctx.textAlign = 'center';
           ctx.textBaseline = 'middle';
-          ctx.fillStyle = '#000';
-          ctx.fillText(label, (node as GraphNode).x || 0, (node as GraphNode).y || 0 + 4);
+          
+          // Add text shadow for better visibility
+          ctx.shadowColor = 'rgba(255, 255, 255, 0.8)';
+          ctx.shadowBlur = 4;
+          ctx.fillStyle = '#1f2937'; // Dark gray for better contrast
+          ctx.fillText(label, graphNode.x || 0, (graphNode.y || 0) + 5);
+          
+          // Reset shadow
+          ctx.shadowBlur = 0;
         }}
       />
       
       {selectedNode && (
-        <div className="absolute top-4 right-4 bg-white dark:bg-zinc-800 p-4 rounded-lg shadow-lg max-w-sm z-10">
-          <h3 className="font-semibold text-lg mb-2">{selectedNode.label}</h3>
+        <div className="absolute top-4 right-4 bg-gray-200 border-2 border-gray-300 p-4 rounded-lg shadow-xl max-w-sm z-10">
+          <h3 className="font-semibold text-lg mb-2 text-black">{selectedNode.label}</h3>
           {selectedNode.type === 'player' && (
-            <div className="text-sm text-zinc-600 dark:text-zinc-400">
-              <p>Player ID: {selectedNode.playerId}</p>
+            <div className="text-sm text-black">
+              <p className="font-medium">Player ID: <span className="font-normal">{selectedNode.playerId}</span></p>
               {selectedNode.playerId === playerId && (
-                <p className="mt-2 text-xs text-blue-600">Click to see last 3 seasons</p>
+                <p className="mt-2 text-xs text-blue-600 font-medium">Click to see last 3 seasons</p>
               )}
             </div>
           )}
           {selectedNode.type === 'team-season' && (
-            <div className="text-sm text-zinc-600 dark:text-zinc-400">
-              <p>Team: {selectedNode.teamAbbr}</p>
-              <p>Season: {selectedNode.season}</p>
-              <p className="mt-2 text-xs text-blue-600">Click to see teammates</p>
+            <div className="text-sm text-black">
+              <p className="font-medium">Team: <span className="font-normal">{selectedNode.teamAbbr}</span></p>
+              <p className="font-medium">Season: <span className="font-normal">{selectedNode.season}</span></p>
+              <p className="mt-2 text-xs text-blue-600 font-medium">Click to see teammates</p>
             </div>
           )}
           <button
             onClick={() => setSelectedNode(null)}
-            className="mt-2 text-xs text-blue-600 hover:underline"
+            className="mt-3 px-3 py-1 text-xs font-medium text-white bg-blue-600 hover:bg-blue-700 rounded transition-colors"
           >
             Close
           </button>
