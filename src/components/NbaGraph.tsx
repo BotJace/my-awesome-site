@@ -27,24 +27,41 @@ export default function NbaGraph({ initialPlayerId }: NbaGraphProps) {
   const [loadedTeamSeasons, setLoadedTeamSeasons] = useState<Set<string>>(new Set());
   const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
   const [loading, setLoading] = useState(true);
-  const [playerName, setPlayerName] = useState<string>('');
+  const [playerNames, setPlayerNames] = useState<Record<number, string>>({});
   const graphRef = useRef<any>(null);
 
+  // Load player names mapping
+  useEffect(() => {
+    const loadPlayerNames = async () => {
+      try {
+        const response = await fetch('/data/player_names.json');
+        if (response.ok) {
+          const names = await response.json();
+          setPlayerNames(names);
+        }
+      } catch (error) {
+        console.error('Error loading player names:', error);
+      }
+    };
+    loadPlayerNames();
+  }, []);
 
   // Initialize with just the player node (fixed at center, immovable)
   useEffect(() => {
+    const playerName = playerNames[playerId] || `Player ${playerId}`;
     const playerNode: GraphNode = {
       id: `player-${playerId}`,
       type: 'player',
-      label: `Player ${playerId}`,
+      label: playerName,
       playerId,
+      playerName,
       fx: 0, // Fix at center initially (force graph centers at 0,0) - immovable
       fy: 0,
     };
     setNodes([playerNode]);
     setLinks([]);
     setLoading(false);
-  }, [playerId]);
+  }, [playerId, playerNames]);
 
   // Load player's last 3 seasons when player node is clicked
   const loadPlayerSeasons = useCallback(async (playerId: number) => {
@@ -140,22 +157,6 @@ export default function NbaGraph({ initialPlayerId }: NbaGraphProps) {
       
       const rosterData: TeamRosterRecord[] = await response.json();
       
-      // Get player name from roster if we don't have it yet
-      if (!playerName && rosterData.length > 0) {
-        const mainPlayer = rosterData.find(p => p.PLAYER_ID === playerId);
-        if (mainPlayer) {
-          setPlayerName(mainPlayer.PLAYER);
-          // Update player node label
-          setNodes(prevNodes => 
-            prevNodes.map(n => 
-              n.id === `player-${playerId}` 
-                ? { ...n, label: mainPlayer.PLAYER, playerName: mainPlayer.PLAYER }
-                : n
-            )
-          );
-        }
-      }
-      
       // Add teammate nodes and links
       const newNodes: GraphNode[] = [];
       const newLinks: GraphLink[] = [];
@@ -168,15 +169,17 @@ export default function NbaGraph({ initialPlayerId }: NbaGraphProps) {
       rosterData.forEach((teammate) => {
         const teammateNodeId = `player-${teammate.PLAYER_ID}`;
         const isStartingPlayer = teammate.PLAYER_ID === playerId;
+        // Use name from roster data (should always be available)
+        const teammateName = teammate.PLAYER;
         
         // Add teammate node if it doesn't exist (including the starting player)
         if (!existingNodeIds.has(teammateNodeId)) {
           newNodes.push({
             id: teammateNodeId,
             type: 'player',
-            label: teammate.PLAYER,
+            label: teammateName,
             playerId: teammate.PLAYER_ID,
-            playerName: teammate.PLAYER,
+            playerName: teammateName,
           });
           existingNodeIds.add(teammateNodeId); // Track it so we don't add duplicates
         }
@@ -227,7 +230,7 @@ export default function NbaGraph({ initialPlayerId }: NbaGraphProps) {
     } catch (error) {
       console.error(`Error loading team roster for ${teamId} ${season}:`, error);
     }
-  }, [playerId, playerName, loadedTeamSeasons, nodes]);
+  }, [playerId, loadedTeamSeasons, nodes]);
 
   // Collapse (close) a team node by removing its teammates
   const collapseTeamRoster = useCallback((teamId: number, season: string) => {
