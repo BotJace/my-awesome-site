@@ -229,6 +229,63 @@ export default function NbaGraph({ initialPlayerId }: NbaGraphProps) {
     }
   }, [playerId, playerName, loadedTeamSeasons, nodes]);
 
+  // Collapse (close) a team node by removing its teammates
+  const collapseTeamRoster = useCallback((teamId: number, season: string) => {
+    const teamSeasonId = `team-${teamId}-${season}`;
+    const teamSeasonKey = `${teamId}-${season}`;
+
+    // Calculate updates using functional updates to access current state
+    setLinks(prevLinks => {
+      const playerNodeId = `player-${playerId}`;
+      // Filter out links from teammates to this team-season node
+      // But keep the link from starting player to the team
+      const filteredLinks = prevLinks.filter(link => {
+        const sourceId = typeof link.source === 'object' ? link.source.id : link.source;
+        const targetId = typeof link.target === 'object' ? link.target.id : link.target;
+        // Remove links where the team is the target AND the source is not the starting player
+        if (targetId === teamSeasonId && sourceId !== playerNodeId) {
+          return false; // Remove teammate -> team links
+        }
+        // Keep all other links (including starting player -> team links)
+        return true;
+      });
+
+      // Update nodes based on the filtered links
+      setNodes(prevNodes => {
+        const teamNodeIds = new Set(
+          prevNodes
+            .filter(n => n.type === 'team-season')
+            .map(n => n.id)
+        );
+
+        return prevNodes.filter(node => {
+          // Always keep the starting player and team-season nodes
+          if (node.id === `player-${playerId}`) return true;
+          if (node.type === 'team-season') return true;
+
+          // For other player nodes, check if they still have links to any team nodes
+          const hasLinkToTeam = filteredLinks.some(link => {
+            const sourceId = typeof link.source === 'object' ? link.source.id : link.source;
+            const targetId = typeof link.target === 'object' ? link.target.id : link.target;
+            return (sourceId === node.id && teamNodeIds.has(targetId)) ||
+                   (targetId === node.id && teamNodeIds.has(sourceId));
+          });
+
+          return hasLinkToTeam;
+        });
+      });
+
+      return filteredLinks;
+    });
+
+    // Remove from loaded set so it can be expanded again
+    setLoadedTeamSeasons(prev => {
+      const next = new Set(prev);
+      next.delete(teamSeasonKey);
+      return next;
+    });
+  }, [playerId]);
+
   const handleNodeClick = useCallback((node: any) => {
     const graphNode = node as GraphNode;
     setSelectedNode(graphNode);
@@ -238,11 +295,19 @@ export default function NbaGraph({ initialPlayerId }: NbaGraphProps) {
       loadPlayerSeasons(playerId);
     }
     
-    // If clicking a team-season node, load its roster
+    // If clicking a team-season node, toggle expansion/collapse
     if (graphNode.type === 'team-season' && graphNode.teamId && graphNode.season) {
-      loadTeamRoster(graphNode.teamId, graphNode.season, graphNode.teamAbbr);
+      const teamSeasonKey = `${graphNode.teamId}-${graphNode.season}`;
+      
+      // If already loaded (expanded), collapse it
+      if (loadedTeamSeasons.has(teamSeasonKey)) {
+        collapseTeamRoster(graphNode.teamId, graphNode.season);
+      } else {
+        // Otherwise, expand it
+        loadTeamRoster(graphNode.teamId, graphNode.season, graphNode.teamAbbr);
+      }
     }
-  }, [playerId, loadPlayerSeasons, loadTeamRoster, loadedTeamSeasons]);
+  }, [playerId, loadPlayerSeasons, loadTeamRoster, loadedTeamSeasons, collapseTeamRoster]);
 
   const nodeColor = useCallback((node: any) => {
     const graphNode = node as GraphNode;
@@ -329,10 +394,46 @@ export default function NbaGraph({ initialPlayerId }: NbaGraphProps) {
           // Configure force simulation for increased node spacing
           if (graphRef.current) {
             const graph = graphRef.current as any;
-            // Increase link distance for more spacing between connected nodes
+            // Configure link distance with a function to maintain fixed distance for starting player -> team edges
             const linkForce = graph.d3Force?.('link');
             if (linkForce) {
-              linkForce.distance(150); // Increased from default ~30
+              linkForce.distance((link: any) => {
+                // Normalize source/target to handle both objects and strings
+                const getNodeId = (node: any) => {
+                  if (typeof node === 'object' && node !== null && 'id' in node) {
+                    return node.id;
+                  }
+                  return String(node);
+                };
+                const sourceId = getNodeId(link.source);
+                const targetId = getNodeId(link.target);
+                const playerNodeId = `player-${playerId}`;
+                
+                // Fixed distance for edges from starting player to teams - maintain longer distance even when teammates are added
+                if (sourceId === playerNodeId || targetId === playerNodeId) {
+                  return 200; // Longer, fixed distance for starting player -> team edges (increased from 150)
+                }
+                // Different distance for teammate -> team edges
+                return 80; // Shorter distance for teammate edges
+              });
+              // Increase link strength (stiffness) for starting player -> team edges to resist compression
+              linkForce.strength((link: any) => {
+                const getNodeId = (node: any) => {
+                  if (typeof node === 'object' && node !== null && 'id' in node) {
+                    return node.id;
+                  }
+                  return String(node);
+                };
+                const sourceId = getNodeId(link.source);
+                const targetId = getNodeId(link.target);
+                const playerNodeId = `player-${playerId}`;
+                
+                // Stronger link for starting player -> team edges to maintain distance
+                if (sourceId === playerNodeId || targetId === playerNodeId) {
+                  return 1.5; // Higher strength to resist compression
+                }
+                return 0.5; // Lower strength for teammate edges
+              });
             }
             // Increase charge (repulsion) for more spacing between all nodes
             const chargeForce = graph.d3Force?.('charge');
