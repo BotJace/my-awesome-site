@@ -26,6 +26,8 @@ export default function NbaGraph({ initialPlayerId }: NbaGraphProps) {
   const [links, setLinks] = useState<GraphLink[]>([]);
   const [loadedTeamSeasons, setLoadedTeamSeasons] = useState<Set<string>>(new Set());
   const [expandedPlayers, setExpandedPlayers] = useState<Set<number>>(new Set()); // Track which players have had their teams expanded
+  const [clickedPlayers, setClickedPlayers] = useState<Set<number>>(new Set()); // Track all clicked players for orange color
+  const [lastClickedTeamSeasonId, setLastClickedTeamSeasonId] = useState<string | null>(null); // Track the most recently expanded team for highlighting and collapse restriction
   const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
   const [loading, setLoading] = useState(true);
   const [playerNames, setPlayerNames] = useState<Record<number, string>>({});
@@ -63,6 +65,8 @@ export default function NbaGraph({ initialPlayerId }: NbaGraphProps) {
     setLinks([]);
     setExpandedPlayers(new Set()); // Reset expanded players when starting player changes
     setLoadedTeamSeasons(new Set()); // Reset loaded team seasons
+    setClickedPlayers(new Set()); // Reset clicked players
+    setLastClickedTeamSeasonId(null); // Reset last clicked team
     setLoading(false);
   }, [playerId, playerNames]);
 
@@ -254,6 +258,9 @@ export default function NbaGraph({ initialPlayerId }: NbaGraphProps) {
 
       // Mark as loaded
       setLoadedTeamSeasons(prev => new Set([...prev, teamSeasonKey]));
+      
+      // Set as the most recently expanded team
+      setLastClickedTeamSeasonId(teamSeasonId);
     } catch (error) {
       console.error(`Error loading team roster for ${teamId} ${season}:`, error);
     }
@@ -314,6 +321,9 @@ export default function NbaGraph({ initialPlayerId }: NbaGraphProps) {
       next.delete(teamSeasonKey);
       return next;
     });
+    
+    // If this was the most recently expanded team, clear it
+    setLastClickedTeamSeasonId(prev => prev === teamSeasonId ? null : prev);
   }, [playerId]);
 
   const handleNodeClick = useCallback((node: any) => {
@@ -322,31 +332,42 @@ export default function NbaGraph({ initialPlayerId }: NbaGraphProps) {
     
     // If clicking any player node, load their teams (if not already expanded)
     if (graphNode.type === 'player' && graphNode.playerId) {
+      // Add to clicked players set (all clicked players will be orange)
+      setClickedPlayers(prev => new Set([...prev, graphNode.playerId!]));
       loadPlayerSeasons(graphNode.playerId);
     }
     
     // If clicking a team-season node, toggle expansion/collapse
     if (graphNode.type === 'team-season' && graphNode.teamId && graphNode.season) {
       const teamSeasonKey = `${graphNode.teamId}-${graphNode.season}`;
+      const teamSeasonId = `team-${graphNode.teamId}-${graphNode.season}`;
       
-      // If already loaded (expanded), collapse it
+      // If already loaded (expanded), only collapse if it's the most recently expanded team
       if (loadedTeamSeasons.has(teamSeasonKey)) {
-        collapseTeamRoster(graphNode.teamId, graphNode.season);
+        if (lastClickedTeamSeasonId === teamSeasonId) {
+          collapseTeamRoster(graphNode.teamId, graphNode.season);
+        }
       } else {
         // Otherwise, expand it
         loadTeamRoster(graphNode.teamId, graphNode.season, graphNode.teamAbbr);
       }
     }
-  }, [loadPlayerSeasons, loadTeamRoster, loadedTeamSeasons, collapseTeamRoster]);
+  }, [loadPlayerSeasons, loadTeamRoster, loadedTeamSeasons, collapseTeamRoster, lastClickedTeamSeasonId]);
 
   const nodeColor = useCallback((node: any) => {
     const graphNode = node as GraphNode;
     // High contrast colors
     if (graphNode.type === 'player' && graphNode.playerId === playerId) {
-      return '#10b981'; // Green for starting player
+      return '#10b981'; // Green for starting player (always green, even if clicked)
+    }
+    if (graphNode.type === 'player' && graphNode.playerId && clickedPlayers.has(graphNode.playerId)) {
+      return '#f97316'; // Orange for all clicked players
+    }
+    if (graphNode.type === 'team-season' && graphNode.id === lastClickedTeamSeasonId) {
+      return '#f59e0b'; // Amber/yellow for most recently clicked team node
     }
     return graphNode.type === 'player' ? '#2563eb' : '#dc2626'; // Blue for players, red for teams
-  }, [playerId]);
+  }, [playerId, clickedPlayers, lastClickedTeamSeasonId]);
 
   const nodeLabel = useCallback((node: any) => {
     const graphNode = node as GraphNode;
@@ -409,13 +430,23 @@ export default function NbaGraph({ initialPlayerId }: NbaGraphProps) {
           };
           const sourceId = getNodeId(link.source);
           const targetId = getNodeId(link.target);
-          const playerNodeId = `player-${playerId}`;
           
-          // They Rule style: Thinner, cleaner lines
-          if (sourceId === playerNodeId || targetId === playerNodeId) {
-            return 2.5; // Slightly thicker for starting player
+          // Check if this is an edge from a player to a team-season
+          const isPlayerToTeam = sourceId.startsWith('player-') && targetId.startsWith('team-');
+          const isTeamToPlayer = targetId.startsWith('player-') && sourceId.startsWith('team-');
+          
+          // Make edges from players to team-seasons thicker (for all clicked players)
+          if (isPlayerToTeam || isTeamToPlayer) {
+            return 3; // Thicker for player-to-season edges
           }
-          return 1; // Thin, clean lines
+          
+          const playerNodeId = `player-${playerId}`;
+          // Keep starting player edges slightly thicker (but player-to-season edges are handled above)
+          if (sourceId === playerNodeId || targetId === playerNodeId) {
+            return 2.5;
+          }
+          
+          return 1; // Thin, clean lines for other edges
         }}
         // Edges automatically follow nodes dynamically (this is how force graphs work)
         // Increase node visual size to give each node more space
