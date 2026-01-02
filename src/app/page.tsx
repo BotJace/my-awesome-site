@@ -1,15 +1,7 @@
 'use client';
 
 import { useState, useEffect, useMemo, useRef } from 'react';
-import dynamic from 'next/dynamic';
 import NbaGraph from "@/components/NbaGraph";
-import NbaGraphCytoscape from "@/components/NbaGraphCytoscape";
-
-// Dynamically import Sigma component with SSR disabled (it uses WebGL)
-const NbaGraphSigma = dynamic(
-  () => import("@/components/NbaGraphSigma"),
-  { ssr: false }
-);
 
 interface PlayerOption {
   id: number;
@@ -17,7 +9,6 @@ interface PlayerOption {
 }
 
 export default function Home() {
-  const [graphType, setGraphType] = useState<'force' | 'cytoscape' | 'sigma'>('force');
   const [playerId, setPlayerId] = useState<number>(2544); // LeBron James default
   const [playerNames, setPlayerNames] = useState<Record<number, string>>({});
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -124,43 +115,8 @@ export default function Home() {
             </div>
           )}
         </div>
-
-        <div className="mt-3 flex gap-2 flex-wrap">
-          <button
-            onClick={() => setGraphType('force')}
-            className={`px-3 py-1 text-xs font-medium rounded transition-colors ${
-              graphType === 'force'
-                ? 'bg-blue-600 text-white'
-                : 'bg-gray-300 text-black hover:bg-gray-400'
-            }`}
-          >
-            Force Graph
-          </button>
-          <button
-            onClick={() => setGraphType('cytoscape')}
-            className={`px-3 py-1 text-xs font-medium rounded transition-colors ${
-              graphType === 'cytoscape'
-                ? 'bg-blue-600 text-white'
-                : 'bg-gray-300 text-black hover:bg-gray-400'
-            }`}
-          >
-            Cytoscape
-          </button>
-          <button
-            onClick={() => setGraphType('sigma')}
-            className={`px-3 py-1 text-xs font-medium rounded transition-colors ${
-              graphType === 'sigma'
-                ? 'bg-blue-600 text-white'
-                : 'bg-gray-300 text-black hover:bg-gray-400'
-            }`}
-          >
-            Sigma
-          </button>
-        </div>
       </div>
-      {graphType === 'force' && <NbaGraph initialPlayerId={playerId} />}
-      {graphType === 'cytoscape' && <NbaGraphCytoscape initialPlayerId={playerId} />}
-      {graphType === 'sigma' && <NbaGraphSigma initialPlayerId={playerId} />}
+      <NbaGraph initialPlayerId={playerId} />
     </div>
   );
 }
