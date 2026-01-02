@@ -13,6 +13,7 @@ export default function Home() {
   const [playerNames, setPlayerNames] = useState<Record<number, string>>({});
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [showResults, setShowResults] = useState<boolean>(false);
+  const [pathMode, setPathMode] = useState<boolean>(false); // Toggle between normal and path mode
   const searchRef = useRef<HTMLDivElement>(null);
 
   // Load player names mapping
@@ -74,7 +75,7 @@ export default function Home() {
     <div className="w-full h-screen">
       <div className="absolute top-4 left-4 z-10 bg-gray-200 border-2 border-gray-300 p-4 rounded-lg shadow-xl max-w-sm">
         <h1 className="text-2xl font-semibold text-black mb-1">
-          This is Jason's cool idea
+          All roads lead to LeBron
         </h1>
         <p className="text-sm text-black">
           Teammate network viz incoming
@@ -115,8 +116,22 @@ export default function Home() {
             </div>
           )}
         </div>
+
+        {/* Mode Toggle */}
+        <div className="mt-3">
+          <button
+            onClick={() => setPathMode(!pathMode)}
+            className={`w-full px-3 py-2 text-xs font-medium rounded transition-colors ${
+              pathMode
+                ? 'bg-orange-600 text-white'
+                : 'bg-gray-300 text-black hover:bg-gray-400'
+            }`}
+          >
+            {pathMode ? 'Path Mode (ON)' : 'Path Mode (OFF)'}
+          </button>
+        </div>
       </div>
-      <NbaGraph initialPlayerId={playerId} />
+      <NbaGraph initialPlayerId={playerId} pathMode={pathMode} />
     </div>
   );
 }

@@ -16,9 +16,10 @@ const PLAYER_ID = 2544; // LeBron James - Change this to visualize a different p
 
 interface NbaGraphProps {
   initialPlayerId?: number;
+  pathMode?: boolean;
 }
 
-export default function NbaGraph({ initialPlayerId }: NbaGraphProps) {
+export default function NbaGraph({ initialPlayerId, pathMode = false }: NbaGraphProps) {
   // Use prop if provided, otherwise use the constant
   const playerId = initialPlayerId || PLAYER_ID;
   
@@ -49,7 +50,7 @@ export default function NbaGraph({ initialPlayerId }: NbaGraphProps) {
     loadPlayerNames();
   }, []);
 
-  // Initialize with just the player node (fixed at center, immovable)
+  // Initialize with just the player node
   useEffect(() => {
     const playerName = playerNames[playerId] || `Player ${playerId}`;
     const playerNode: GraphNode = {
@@ -58,8 +59,6 @@ export default function NbaGraph({ initialPlayerId }: NbaGraphProps) {
       label: playerName,
       playerId,
       playerName,
-      fx: 0, // Fix at center initially (force graph centers at 0,0) - immovable
-      fy: 0,
     };
     setNodes([playerNode]);
     setLinks([]);
@@ -126,15 +125,7 @@ export default function NbaGraph({ initialPlayerId }: NbaGraphProps) {
         const existingIds = new Set(prevNodes.map(n => n.id));
         const nodesToAdd = teamSeasonNodes.filter(n => !existingIds.has(n.id));
         
-        // Preserve starting player's fixed position at (0, 0)
-        const preservedNodes = prevNodes.map(n => {
-          if (n.id === `player-${playerId}`) {
-            return { ...n, fx: 0, fy: 0 };
-          }
-          return n;
-        });
-        
-        return [...preservedNodes, ...nodesToAdd];
+        return [...prevNodes, ...nodesToAdd];
       });
 
       // Add links (separate from nodes update to avoid nested state updates)
@@ -225,19 +216,11 @@ export default function NbaGraph({ initialPlayerId }: NbaGraphProps) {
         });
       });
 
-      // Add new nodes, preserve starting player's fixed position
+      // Add new nodes
       setNodes(prevNodes => {
         const existingIds = new Set(prevNodes.map(n => n.id));
         const nodesToAdd = newNodes.filter(n => !existingIds.has(n.id));
-        // Preserve starting player's fixed position at (0, 0)
-        const preservedNodes = prevNodes.map(n => {
-          if (n.id === `player-${playerId}`) {
-            return { ...n, fx: 0, fy: 0 };
-          }
-          return n;
-        });
-        
-        return [...preservedNodes, ...nodesToAdd];
+        return [...prevNodes, ...nodesToAdd];
       });
 
       // Add new links
@@ -265,6 +248,149 @@ export default function NbaGraph({ initialPlayerId }: NbaGraphProps) {
       console.error(`Error loading team roster for ${teamId} ${season}:`, error);
     }
   }, [playerId, loadedTeamSeasons, nodes]);
+
+  // Collapse all teams except the specified one (path mode: collapse sibling teams)
+  const collapseSiblingTeams = useCallback((keepTeamSeasonId: string) => {
+    setLinks(prevLinks => {
+      const playerNodeId = `player-${playerId}`;
+      
+      // Filter links: remove all team rosters except the one to keep
+      const filteredLinks = prevLinks.filter(link => {
+        const sourceId = typeof link.source === 'object' ? link.source.id : link.source;
+        const targetId = typeof link.target === 'object' ? link.target.id : link.target;
+        
+        // Keep links to team-season nodes (player -> team links)
+        if (targetId.startsWith('team-')) {
+          return true;
+        }
+        
+        // Remove player -> team links where the team is not the one to keep
+        if (sourceId.startsWith('player-') && targetId === keepTeamSeasonId) {
+          return true; // Keep link to the specified team
+        }
+        
+        // Remove teammate -> team links except for the team to keep
+        if (targetId.startsWith('team-') && targetId !== keepTeamSeasonId) {
+          return false; // Remove links to other teams
+        }
+        
+        return true;
+      });
+
+      // Update nodes: remove players that are only connected to collapsed teams
+      setNodes(prevNodes => {
+        const teamNodeIds = new Set(
+          prevNodes
+            .filter(n => n.type === 'team-season')
+            .map(n => n.id)
+        );
+
+        return prevNodes.filter(node => {
+          // Always keep the starting player and team-season nodes
+          if (node.id === `player-${playerId}`) return true;
+          if (node.type === 'team-season') return true;
+
+          // For other player nodes, check if they still have links to the kept team
+          const hasLinkToKeptTeam = filteredLinks.some(link => {
+            const sourceId = typeof link.source === 'object' ? link.source.id : link.source;
+            const targetId = typeof link.target === 'object' ? link.target.id : link.target;
+            return (sourceId === node.id && targetId === keepTeamSeasonId) ||
+                   (targetId === node.id && sourceId === keepTeamSeasonId);
+          });
+
+          return hasLinkToKeptTeam;
+        });
+      });
+
+      return filteredLinks;
+    });
+
+    // Update loadedTeamSeasons: keep only the specified team
+    setLoadedTeamSeasons(prev => {
+      const keepKey = keepTeamSeasonId.replace('team-', '');
+      return new Set(prev.has(keepKey) ? [keepKey] : []);
+    });
+  }, [playerId]);
+
+  // Collapse all players' teams except the specified one (path mode: collapse sibling players)
+  const collapseSiblingPlayers = useCallback((keepPlayerId: number) => {
+    setLinks(prevLinks => {
+      const keepPlayerNodeId = `player-${keepPlayerId}`;
+      const startingPlayerNodeId = `player-${playerId}`;
+      
+      // Filter links: remove all team-season nodes except those connected to the kept player
+      const filteredLinks = prevLinks.filter(link => {
+        const sourceId = typeof link.source === 'object' ? link.source.id : link.source;
+        const targetId = typeof link.target === 'object' ? link.target.id : link.target;
+        
+        // Keep all links to/from the starting player
+        if (sourceId === startingPlayerNodeId || targetId === startingPlayerNodeId) {
+          return true;
+        }
+        
+        // Keep links to/from the kept player
+        if (sourceId === keepPlayerNodeId || targetId === keepPlayerNodeId) {
+          return true;
+        }
+        
+        // Remove links from other players to teams
+        if (sourceId.startsWith('player-') && targetId.startsWith('team-')) {
+          return false;
+        }
+        
+        // Remove links from teams to other players (except the kept one)
+        if (targetId.startsWith('player-') && sourceId.startsWith('team-')) {
+          return targetId === keepPlayerNodeId;
+        }
+        
+        return true;
+      });
+
+      // Update nodes: remove team-seasons not connected to the kept player, and players not in the path
+      setNodes(prevNodes => {
+        const keepPlayerNodeId = `player-${keepPlayerId}`;
+        const startingPlayerNodeId = `player-${playerId}`;
+        
+        // Find team-season IDs connected to the kept player
+        const keptTeamSeasonIds = new Set<string>();
+        filteredLinks.forEach(link => {
+          const sourceId = typeof link.source === 'object' ? link.source.id : link.source;
+          const targetId = typeof link.target === 'object' ? link.target.id : link.target;
+          if (sourceId === keepPlayerNodeId && targetId.startsWith('team-')) {
+            keptTeamSeasonIds.add(targetId);
+          }
+          if (targetId === keepPlayerNodeId && sourceId.startsWith('team-')) {
+            keptTeamSeasonIds.add(sourceId);
+          }
+        });
+
+        return prevNodes.filter(node => {
+          // Always keep the starting player
+          if (node.id === startingPlayerNodeId) return true;
+          
+          // Keep the clicked player
+          if (node.id === keepPlayerNodeId) return true;
+          
+          // Keep team-season nodes connected to the kept player
+          if (node.type === 'team-season' && keptTeamSeasonIds.has(node.id)) {
+            return true;
+          }
+          
+          // Remove all other nodes
+          return false;
+        });
+      });
+
+      return filteredLinks;
+    });
+
+    // In path mode, clear expandedPlayers so the player can be reloaded
+    // (The team-season nodes will be removed by the node filtering above if they're not connected)
+    setExpandedPlayers(new Set());
+    
+    // Clear loaded team seasons (they'll be reloaded if needed)
+    setLoadedTeamSeasons(new Set());
+  }, [playerId]);
 
   // Collapse (close) a team node by removing its teammates
   const collapseTeamRoster = useCallback((teamId: number, season: string) => {
@@ -330,29 +456,52 @@ export default function NbaGraph({ initialPlayerId }: NbaGraphProps) {
     const graphNode = node as GraphNode;
     setSelectedNode(graphNode);
     
-    // If clicking any player node, load their teams (if not already expanded)
-    if (graphNode.type === 'player' && graphNode.playerId) {
-      // Add to clicked players set (all clicked players will be orange)
-      setClickedPlayers(prev => new Set([...prev, graphNode.playerId!]));
-      loadPlayerSeasons(graphNode.playerId);
-    }
-    
-    // If clicking a team-season node, toggle expansion/collapse
-    if (graphNode.type === 'team-season' && graphNode.teamId && graphNode.season) {
-      const teamSeasonKey = `${graphNode.teamId}-${graphNode.season}`;
-      const teamSeasonId = `team-${graphNode.teamId}-${graphNode.season}`;
+    if (pathMode) {
+      // Path mode: collapse siblings at the same level
+      if (graphNode.type === 'player' && graphNode.playerId) {
+        // Add to clicked players set
+        setClickedPlayers(prev => new Set([...prev, graphNode.playerId!]));
+        // Collapse all other players' teams first (this clears expandedPlayers)
+        collapseSiblingPlayers(graphNode.playerId);
+        // Then load this player's teams
+        // Note: collapseSiblingPlayers clears expandedPlayers, so loadPlayerSeasons will run
+        loadPlayerSeasons(graphNode.playerId);
+      }
       
-      // If already loaded (expanded), only collapse if it's the most recently expanded team
-      if (loadedTeamSeasons.has(teamSeasonKey)) {
-        if (lastClickedTeamSeasonId === teamSeasonId) {
-          collapseTeamRoster(graphNode.teamId, graphNode.season);
-        }
-      } else {
-        // Otherwise, expand it
+      if (graphNode.type === 'team-season' && graphNode.teamId && graphNode.season) {
+        const teamSeasonKey = `${graphNode.teamId}-${graphNode.season}`;
+        const teamSeasonId = `team-${graphNode.teamId}-${graphNode.season}`;
+        
+        // Collapse all other teams' rosters first
+        collapseSiblingTeams(teamSeasonId);
+        // Then load this team's roster
         loadTeamRoster(graphNode.teamId, graphNode.season, graphNode.teamAbbr);
       }
+    } else {
+      // Normal mode: original behavior
+      if (graphNode.type === 'player' && graphNode.playerId) {
+        // Add to clicked players set (all clicked players will be orange)
+        setClickedPlayers(prev => new Set([...prev, graphNode.playerId!]));
+        loadPlayerSeasons(graphNode.playerId);
+      }
+      
+      // If clicking a team-season node, toggle expansion/collapse
+      if (graphNode.type === 'team-season' && graphNode.teamId && graphNode.season) {
+        const teamSeasonKey = `${graphNode.teamId}-${graphNode.season}`;
+        const teamSeasonId = `team-${graphNode.teamId}-${graphNode.season}`;
+        
+        // If already loaded (expanded), only collapse if it's the most recently expanded team
+        if (loadedTeamSeasons.has(teamSeasonKey)) {
+          if (lastClickedTeamSeasonId === teamSeasonId) {
+            collapseTeamRoster(graphNode.teamId, graphNode.season);
+          }
+        } else {
+          // Otherwise, expand it
+          loadTeamRoster(graphNode.teamId, graphNode.season, graphNode.teamAbbr);
+        }
+      }
     }
-  }, [loadPlayerSeasons, loadTeamRoster, loadedTeamSeasons, collapseTeamRoster, lastClickedTeamSeasonId]);
+  }, [pathMode, loadPlayerSeasons, loadTeamRoster, loadedTeamSeasons, collapseTeamRoster, lastClickedTeamSeasonId, collapseSiblingPlayers, collapseSiblingTeams]);
 
   const nodeColor = useCallback((node: any) => {
     const graphNode = node as GraphNode;
@@ -388,16 +537,6 @@ export default function NbaGraph({ initialPlayerId }: NbaGraphProps) {
         ref={graphRef}
         graphData={{ nodes, links }}
         onNodeClick={handleNodeClick}
-        onNodeDrag={(node: any) => {
-          const graphNode = node as GraphNode;
-          // Keep starting player fixed at (0, 0) - prevent dragging
-          if (graphNode.playerId === playerId) {
-            node.fx = 0;
-            node.fy = 0;
-            node.x = 0;
-            node.y = 0;
-          }
-        }}
         nodeColor={nodeColor}
         nodeLabel={nodeLabel}
         linkDirectionalArrowLength={0}
@@ -449,61 +588,7 @@ export default function NbaGraph({ initialPlayerId }: NbaGraphProps) {
           return 1; // Thin, clean lines for other edges
         }}
         // Edges automatically follow nodes dynamically (this is how force graphs work)
-        // Increase node visual size to give each node more space
-        nodeRelSize={8} // Larger nodes = more visual spacing
-        onEngineTick={() => {
-          // Configure force simulation for increased node spacing
-          if (graphRef.current) {
-            const graph = graphRef.current as any;
-            // Configure link distance with a function to maintain fixed distance for starting player -> team edges
-            const linkForce = graph.d3Force?.('link');
-            if (linkForce) {
-              linkForce.distance((link: any) => {
-                // Normalize source/target to handle both objects and strings
-                const getNodeId = (node: any) => {
-                  if (typeof node === 'object' && node !== null && 'id' in node) {
-                    return node.id;
-                  }
-                  return String(node);
-                };
-                const sourceId = getNodeId(link.source);
-                const targetId = getNodeId(link.target);
-                const playerNodeId = `player-${playerId}`;
-                
-                // Fixed distance for edges from starting player to teams - maintain longer distance even when teammates are added
-                if (sourceId === playerNodeId || targetId === playerNodeId) {
-                  return 200; // Longer, fixed distance for starting player -> team edges (increased from 150)
-                }
-                // Different distance for teammate -> team edges
-                return 80; // Shorter distance for teammate edges
-              });
-              // Increase link strength (stiffness) for starting player -> team edges to resist compression
-              linkForce.strength((link: any) => {
-                const getNodeId = (node: any) => {
-                  if (typeof node === 'object' && node !== null && 'id' in node) {
-                    return node.id;
-                  }
-                  return String(node);
-                };
-                const sourceId = getNodeId(link.source);
-                const targetId = getNodeId(link.target);
-                const playerNodeId = `player-${playerId}`;
-                
-                // Stronger link for starting player -> team edges to maintain distance
-                if (sourceId === playerNodeId || targetId === playerNodeId) {
-                  return 1.5; // Higher strength to resist compression
-                }
-                return 0.5; // Lower strength for teammate edges
-              });
-            }
-            // Increase charge (repulsion) for more spacing between all nodes
-            const chargeForce = graph.d3Force?.('charge');
-            if (chargeForce) {
-              chargeForce.strength(-500); // Increased repulsion
-            }
-          }
-        }}
-        cooldownTicks={100}
+        nodeRelSize={8}
         backgroundColor="rgba(249, 250, 251, 0)"
         nodeCanvasObjectMode={() => 'after'}
         nodeCanvasObject={(node, ctx, globalScale) => {
