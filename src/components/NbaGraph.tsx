@@ -29,10 +29,21 @@ export default function NbaGraph({ initialPlayerId, pathMode = false }: NbaGraph
   const [expandedPlayers, setExpandedPlayers] = useState<Set<number>>(new Set()); // Track which players have had their teams expanded
   const [clickedPlayers, setClickedPlayers] = useState<Set<number>>(new Set()); // Track all clicked players for orange color
   const [lastClickedTeamSeasonId, setLastClickedTeamSeasonId] = useState<string | null>(null); // Track the most recently expanded team for highlighting and collapse restriction
+  const [pathNodes, setPathNodes] = useState<Set<string>>(new Set()); // Track nodes in the current path (path mode)
   const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
   const [loading, setLoading] = useState(true);
   const [playerNames, setPlayerNames] = useState<Record<number, string>>({});
   const graphRef = useRef<any>(null);
+  const nodesRef = useRef<GraphNode[]>([]);
+  const linksRef = useRef<GraphLink[]>([]);
+  
+  // Keep refs in sync with state
+  useEffect(() => {
+    nodesRef.current = nodes;
+  }, [nodes]);
+  useEffect(() => {
+    linksRef.current = links;
+  }, [links]);
 
   // Load player names mapping
   useEffect(() => {
@@ -66,6 +77,7 @@ export default function NbaGraph({ initialPlayerId, pathMode = false }: NbaGraph
     setLoadedTeamSeasons(new Set()); // Reset loaded team seasons
     setClickedPlayers(new Set()); // Reset clicked players
     setLastClickedTeamSeasonId(null); // Reset last clicked team
+    setPathNodes(new Set([`player-${playerId}`])); // Initialize path with starting player
     setLoading(false);
   }, [playerId, playerNames]);
 
@@ -249,148 +261,142 @@ export default function NbaGraph({ initialPlayerId, pathMode = false }: NbaGraph
     }
   }, [playerId, loadedTeamSeasons, nodes]);
 
-  // Collapse all teams except the specified one (path mode: collapse sibling teams)
+  // Collapse all teams except the specified one (path mode: collapse sibling teams from same parent player)
   const collapseSiblingTeams = useCallback((keepTeamSeasonId: string) => {
-    setLinks(prevLinks => {
-      const playerNodeId = `player-${playerId}`;
-      
-      // Filter links: remove all team rosters except the one to keep
-      const filteredLinks = prevLinks.filter(link => {
-        const sourceId = typeof link.source === 'object' ? link.source.id : link.source;
-        const targetId = typeof link.target === 'object' ? link.target.id : link.target;
-        
-        // Keep links to team-season nodes (player -> team links)
-        if (targetId.startsWith('team-')) {
-          return true;
-        }
-        
-        // Remove player -> team links where the team is not the one to keep
-        if (sourceId.startsWith('player-') && targetId === keepTeamSeasonId) {
-          return true; // Keep link to the specified team
-        }
-        
-        // Remove teammate -> team links except for the team to keep
-        if (targetId.startsWith('team-') && targetId !== keepTeamSeasonId) {
-          return false; // Remove links to other teams
-        }
-        
-        return true;
-      });
-
-      // Update nodes: remove players that are only connected to collapsed teams
-      setNodes(prevNodes => {
-        const teamNodeIds = new Set(
-          prevNodes
-            .filter(n => n.type === 'team-season')
-            .map(n => n.id)
-        );
-
-        return prevNodes.filter(node => {
-          // Always keep the starting player and team-season nodes
-          if (node.id === `player-${playerId}`) return true;
-          if (node.type === 'team-season') return true;
-
-          // For other player nodes, check if they still have links to the kept team
-          const hasLinkToKeptTeam = filteredLinks.some(link => {
-            const sourceId = typeof link.source === 'object' ? link.source.id : link.source;
-            const targetId = typeof link.target === 'object' ? link.target.id : link.target;
-            return (sourceId === node.id && targetId === keepTeamSeasonId) ||
-                   (targetId === node.id && sourceId === keepTeamSeasonId);
-          });
-
-          return hasLinkToKeptTeam;
-        });
-      });
-
-      return filteredLinks;
-    });
-
-    // Update loadedTeamSeasons: keep only the specified team
-    setLoadedTeamSeasons(prev => {
-      const keepKey = keepTeamSeasonId.replace('team-', '');
-      return new Set(prev.has(keepKey) ? [keepKey] : []);
-    });
-  }, [playerId]);
-
-  // Collapse all players' teams except the specified one (path mode: collapse sibling players)
-  const collapseSiblingPlayers = useCallback((keepPlayerId: number) => {
-    setLinks(prevLinks => {
-      const keepPlayerNodeId = `player-${keepPlayerId}`;
-      const startingPlayerNodeId = `player-${playerId}`;
-      
-      // Filter links: remove all team-season nodes except those connected to the kept player
-      const filteredLinks = prevLinks.filter(link => {
-        const sourceId = typeof link.source === 'object' ? link.source.id : link.source;
-        const targetId = typeof link.target === 'object' ? link.target.id : link.target;
-        
-        // Keep all links to/from the starting player
-        if (sourceId === startingPlayerNodeId || targetId === startingPlayerNodeId) {
-          return true;
-        }
-        
-        // Keep links to/from the kept player
-        if (sourceId === keepPlayerNodeId || targetId === keepPlayerNodeId) {
-          return true;
-        }
-        
-        // Remove links from other players to teams
-        if (sourceId.startsWith('player-') && targetId.startsWith('team-')) {
-          return false;
-        }
-        
-        // Remove links from teams to other players (except the kept one)
-        if (targetId.startsWith('player-') && sourceId.startsWith('team-')) {
-          return targetId === keepPlayerNodeId;
-        }
-        
-        return true;
-      });
-
-      // Update nodes: remove team-seasons not connected to the kept player, and players not in the path
-      setNodes(prevNodes => {
-        const keepPlayerNodeId = `player-${keepPlayerId}`;
-        const startingPlayerNodeId = `player-${playerId}`;
-        
-        // Find team-season IDs connected to the kept player
-        const keptTeamSeasonIds = new Set<string>();
-        filteredLinks.forEach(link => {
-          const sourceId = typeof link.source === 'object' ? link.source.id : link.source;
-          const targetId = typeof link.target === 'object' ? link.target.id : link.target;
-          if (sourceId === keepPlayerNodeId && targetId.startsWith('team-')) {
-            keptTeamSeasonIds.add(targetId);
-          }
-          if (targetId === keepPlayerNodeId && sourceId.startsWith('team-')) {
-            keptTeamSeasonIds.add(sourceId);
-          }
-        });
-
-        return prevNodes.filter(node => {
-          // Always keep the starting player
-          if (node.id === startingPlayerNodeId) return true;
-          
-          // Keep the clicked player
-          if (node.id === keepPlayerNodeId) return true;
-          
-          // Keep team-season nodes connected to the kept player
-          if (node.type === 'team-season' && keptTeamSeasonIds.has(node.id)) {
-            return true;
-          }
-          
-          // Remove all other nodes
-          return false;
-        });
-      });
-
-      return filteredLinks;
-    });
-
-    // In path mode, clear expandedPlayers so the player can be reloaded
-    // (The team-season nodes will be removed by the node filtering above if they're not connected)
-    setExpandedPlayers(new Set());
+    const prevNodes = nodesRef.current;
+    const prevLinks = linksRef.current;
     
-    // Clear loaded team seasons (they'll be reloaded if needed)
-    setLoadedTeamSeasons(new Set());
-  }, [playerId]);
+    // Find the parent player of the clicked team
+    let parentPlayerNodeId: string | null = null;
+    for (const link of prevLinks) {
+      const sourceId = typeof link.source === 'object' ? link.source.id : link.source;
+      const targetId = typeof link.target === 'object' ? link.target.id : link.target;
+      if (sourceId.startsWith('player-') && targetId === keepTeamSeasonId) {
+        parentPlayerNodeId = sourceId;
+        break;
+      }
+      if (targetId.startsWith('player-') && sourceId === keepTeamSeasonId) {
+        parentPlayerNodeId = targetId;
+        break;
+      }
+    }
+
+    // Identify which team-season nodes to keep: clicked team + teams in path
+    const teamsToKeep = new Set<string>();
+    teamsToKeep.add(keepTeamSeasonId); // Keep the clicked team
+    pathNodes.forEach(nodeId => {
+      if (nodeId.startsWith('team-')) teamsToKeep.add(nodeId); // Keep teams in the path
+    });
+
+    // Filter nodes: remove team-season nodes that aren't in teamsToKeep, but keep all player nodes
+    const filteredNodes = prevNodes.filter(node => {
+      if (node.type === 'player') return true; // Always keep all player nodes
+      if (node.type === 'team-season') {
+        return teamsToKeep.has(node.id); // Only keep teams in teamsToKeep
+      }
+      return true;
+    });
+
+    // Filter links: only keep links where both endpoints exist in filteredNodes
+    const filteredLinks = prevLinks.filter(link => {
+      const sourceId = typeof link.source === 'object' ? link.source.id : link.source;
+      const targetId = typeof link.target === 'object' ? link.target.id : link.target;
+      const sourceExists = filteredNodes.some(n => n.id === sourceId);
+      const targetExists = filteredNodes.some(n => n.id === targetId);
+      return sourceExists && targetExists;
+    });
+
+    // Update both states
+    setNodes(filteredNodes);
+    setLinks(filteredLinks);
+
+    // Update loadedTeamSeasons: keep only the specified team and teams in the path
+    setLoadedTeamSeasons(prev => {
+      const newSet = new Set<string>();
+      const keepKey = keepTeamSeasonId.replace('team-', '');
+      if (prev.has(keepKey)) newSet.add(keepKey);
+      pathNodes.forEach(nodeId => {
+        if (nodeId.startsWith('team-')) {
+          const key = nodeId.replace('team-', '');
+          if (prev.has(key)) newSet.add(key);
+        }
+      });
+      return newSet;
+    });
+  }, [playerId, pathNodes]);
+
+  // Collapse other players connected to the same team as the clicked player (path mode)
+  const collapseSiblingPlayers = useCallback((keepPlayerId: number) => {
+    const keepPlayerNodeId = `player-${keepPlayerId}`;
+    const prevNodes = nodesRef.current;
+    const prevLinks = linksRef.current;
+    
+    // Find which team(s) the clicked player is connected to
+    const teamsConnectedToPlayer = new Set<string>();
+    prevLinks.forEach(link => {
+      const sourceId = typeof link.source === 'object' ? link.source.id : link.source;
+      const targetId = typeof link.target === 'object' ? link.target.id : link.target;
+      if (sourceId === keepPlayerNodeId && targetId.startsWith('team-')) {
+        teamsConnectedToPlayer.add(targetId);
+      }
+      if (targetId === keepPlayerNodeId && sourceId.startsWith('team-')) {
+        teamsConnectedToPlayer.add(sourceId);
+      }
+    });
+
+    // Find other players connected to the same teams (these should be collapsed)
+    const playersToKeep = new Set<string>();
+    playersToKeep.add(keepPlayerNodeId); // Always keep the clicked player
+    pathNodes.forEach(nodeId => {
+      if (nodeId.startsWith('player-')) playersToKeep.add(nodeId); // Keep players in the path
+    });
+    // Also keep the starting player
+    playersToKeep.add(`player-${playerId}`);
+
+    // Identify which team-season nodes to keep: teams connected to clicked player + teams in path
+    const teamsToKeep = new Set<string>();
+    teamsConnectedToPlayer.forEach(teamId => teamsToKeep.add(teamId)); // Keep teams from clicked player
+    pathNodes.forEach(nodeId => {
+      if (nodeId.startsWith('team-')) teamsToKeep.add(nodeId); // Keep teams in the path
+    });
+
+    // Filter nodes: keep only players in playersToKeep, keep teams in teamsToKeep
+    const filteredNodes = prevNodes.filter(node => {
+      if (node.type === 'player') {
+        return playersToKeep.has(node.id); // Only keep players in playersToKeep
+      }
+      if (node.type === 'team-season') {
+        return teamsToKeep.has(node.id); // Only keep teams in teamsToKeep
+      }
+      return true;
+    });
+
+    // Filter links: only keep links where both endpoints exist in filteredNodes
+    const filteredLinks = prevLinks.filter(link => {
+      const sourceId = typeof link.source === 'object' ? link.source.id : link.source;
+      const targetId = typeof link.target === 'object' ? link.target.id : link.target;
+      const sourceExists = filteredNodes.some(n => n.id === sourceId);
+      const targetExists = filteredNodes.some(n => n.id === targetId);
+      return sourceExists && targetExists;
+    });
+
+    // Update both states
+    setNodes(filteredNodes);
+    setLinks(filteredLinks);
+
+    // Update expandedPlayers: keep only the kept player and players in the path
+    setExpandedPlayers(prev => {
+      const newSet = new Set<number>();
+      if (prev.has(keepPlayerId)) newSet.add(keepPlayerId);
+      pathNodes.forEach(nodeId => {
+        if (nodeId.startsWith('player-')) {
+          const pid = parseInt(nodeId.replace('player-', ''));
+          if (prev.has(pid)) newSet.add(pid);
+        }
+      });
+      return newSet;
+    });
+  }, [playerId, pathNodes]);
 
   // Collapse (close) a team node by removing its teammates
   const collapseTeamRoster = useCallback((teamId: number, season: string) => {
@@ -459,12 +465,14 @@ export default function NbaGraph({ initialPlayerId, pathMode = false }: NbaGraph
     if (pathMode) {
       // Path mode: collapse siblings at the same level
       if (graphNode.type === 'player' && graphNode.playerId) {
+        const playerNodeId = `player-${graphNode.playerId}`;
         // Add to clicked players set
         setClickedPlayers(prev => new Set([...prev, graphNode.playerId!]));
-        // Collapse all other players' teams first (this clears expandedPlayers)
+        // Add to path
+        setPathNodes(prev => new Set([...prev, playerNodeId]));
+        // Collapse all other players' teams first
         collapseSiblingPlayers(graphNode.playerId);
         // Then load this player's teams
-        // Note: collapseSiblingPlayers clears expandedPlayers, so loadPlayerSeasons will run
         loadPlayerSeasons(graphNode.playerId);
       }
       
@@ -472,7 +480,9 @@ export default function NbaGraph({ initialPlayerId, pathMode = false }: NbaGraph
         const teamSeasonKey = `${graphNode.teamId}-${graphNode.season}`;
         const teamSeasonId = `team-${graphNode.teamId}-${graphNode.season}`;
         
-        // Collapse all other teams' rosters first
+        // Add to path
+        setPathNodes(prev => new Set([...prev, teamSeasonId]));
+        // Collapse all other teams from the same parent player first
         collapseSiblingTeams(teamSeasonId);
         // Then load this team's roster
         loadTeamRoster(graphNode.teamId, graphNode.season, graphNode.teamAbbr);
