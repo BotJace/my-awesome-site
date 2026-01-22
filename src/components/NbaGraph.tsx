@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState, useRef } from 'react';
 import dynamic from 'next/dynamic';
 import type { GraphNode, GraphLink, PlayerCareerRecord, TeamRosterRecord } from '@/types/nba';
+import { collapseSiblingTeams, collapseSiblingPlayers } from './pathMode';
 
 // Dynamically import ForceGraph2D with SSR disabled (it uses window object)
 const ForceGraph2D = dynamic(
@@ -261,143 +262,6 @@ export default function NbaGraph({ initialPlayerId, pathMode = false }: NbaGraph
     }
   }, [playerId, loadedTeamSeasons, nodes]);
 
-  // Collapse all teams except the specified one (path mode: collapse sibling teams from same parent player)
-  const collapseSiblingTeams = useCallback((keepTeamSeasonId: string) => {
-    const prevNodes = nodesRef.current;
-    const prevLinks = linksRef.current;
-    
-    // Find the parent player of the clicked team
-    let parentPlayerNodeId: string | null = null;
-    for (const link of prevLinks) {
-      const sourceId = typeof link.source === 'object' ? link.source.id : link.source;
-      const targetId = typeof link.target === 'object' ? link.target.id : link.target;
-      if (sourceId.startsWith('player-') && targetId === keepTeamSeasonId) {
-        parentPlayerNodeId = sourceId;
-        break;
-      }
-      if (targetId.startsWith('player-') && sourceId === keepTeamSeasonId) {
-        parentPlayerNodeId = targetId;
-        break;
-      }
-    }
-
-    // Identify which team-season nodes to keep: clicked team + teams in path
-    const teamsToKeep = new Set<string>();
-    teamsToKeep.add(keepTeamSeasonId); // Keep the clicked team
-    pathNodes.forEach(nodeId => {
-      if (nodeId.startsWith('team-')) teamsToKeep.add(nodeId); // Keep teams in the path
-    });
-
-    // Filter nodes: remove team-season nodes that aren't in teamsToKeep, but keep all player nodes
-    const filteredNodes = prevNodes.filter(node => {
-      if (node.type === 'player') return true; // Always keep all player nodes
-      if (node.type === 'team-season') {
-        return teamsToKeep.has(node.id); // Only keep teams in teamsToKeep
-      }
-      return true;
-    });
-
-    // Filter links: only keep links where both endpoints exist in filteredNodes
-    const filteredLinks = prevLinks.filter(link => {
-      const sourceId = typeof link.source === 'object' ? link.source.id : link.source;
-      const targetId = typeof link.target === 'object' ? link.target.id : link.target;
-      const sourceExists = filteredNodes.some(n => n.id === sourceId);
-      const targetExists = filteredNodes.some(n => n.id === targetId);
-      return sourceExists && targetExists;
-    });
-
-    // Update both states
-    setNodes(filteredNodes);
-    setLinks(filteredLinks);
-
-    // Update loadedTeamSeasons: keep only the specified team and teams in the path
-    setLoadedTeamSeasons(prev => {
-      const newSet = new Set<string>();
-      const keepKey = keepTeamSeasonId.replace('team-', '');
-      if (prev.has(keepKey)) newSet.add(keepKey);
-      pathNodes.forEach(nodeId => {
-        if (nodeId.startsWith('team-')) {
-          const key = nodeId.replace('team-', '');
-          if (prev.has(key)) newSet.add(key);
-        }
-      });
-      return newSet;
-    });
-  }, [playerId, pathNodes]);
-
-  // Collapse other players connected to the same team as the clicked player (path mode)
-  const collapseSiblingPlayers = useCallback((keepPlayerId: number) => {
-    const keepPlayerNodeId = `player-${keepPlayerId}`;
-    const prevNodes = nodesRef.current;
-    const prevLinks = linksRef.current;
-    
-    // Find which team(s) the clicked player is connected to
-    const teamsConnectedToPlayer = new Set<string>();
-    prevLinks.forEach(link => {
-      const sourceId = typeof link.source === 'object' ? link.source.id : link.source;
-      const targetId = typeof link.target === 'object' ? link.target.id : link.target;
-      if (sourceId === keepPlayerNodeId && targetId.startsWith('team-')) {
-        teamsConnectedToPlayer.add(targetId);
-      }
-      if (targetId === keepPlayerNodeId && sourceId.startsWith('team-')) {
-        teamsConnectedToPlayer.add(sourceId);
-      }
-    });
-
-    // Find other players connected to the same teams (these should be collapsed)
-    const playersToKeep = new Set<string>();
-    playersToKeep.add(keepPlayerNodeId); // Always keep the clicked player
-    pathNodes.forEach(nodeId => {
-      if (nodeId.startsWith('player-')) playersToKeep.add(nodeId); // Keep players in the path
-    });
-    // Also keep the starting player
-    playersToKeep.add(`player-${playerId}`);
-
-    // Identify which team-season nodes to keep: teams connected to clicked player + teams in path
-    const teamsToKeep = new Set<string>();
-    teamsConnectedToPlayer.forEach(teamId => teamsToKeep.add(teamId)); // Keep teams from clicked player
-    pathNodes.forEach(nodeId => {
-      if (nodeId.startsWith('team-')) teamsToKeep.add(nodeId); // Keep teams in the path
-    });
-
-    // Filter nodes: keep only players in playersToKeep, keep teams in teamsToKeep
-    const filteredNodes = prevNodes.filter(node => {
-      if (node.type === 'player') {
-        return playersToKeep.has(node.id); // Only keep players in playersToKeep
-      }
-      if (node.type === 'team-season') {
-        return teamsToKeep.has(node.id); // Only keep teams in teamsToKeep
-      }
-      return true;
-    });
-
-    // Filter links: only keep links where both endpoints exist in filteredNodes
-    const filteredLinks = prevLinks.filter(link => {
-      const sourceId = typeof link.source === 'object' ? link.source.id : link.source;
-      const targetId = typeof link.target === 'object' ? link.target.id : link.target;
-      const sourceExists = filteredNodes.some(n => n.id === sourceId);
-      const targetExists = filteredNodes.some(n => n.id === targetId);
-      return sourceExists && targetExists;
-    });
-
-    // Update both states
-    setNodes(filteredNodes);
-    setLinks(filteredLinks);
-
-    // Update expandedPlayers: keep only the kept player and players in the path
-    setExpandedPlayers(prev => {
-      const newSet = new Set<number>();
-      if (prev.has(keepPlayerId)) newSet.add(keepPlayerId);
-      pathNodes.forEach(nodeId => {
-        if (nodeId.startsWith('player-')) {
-          const pid = parseInt(nodeId.replace('player-', ''));
-          if (prev.has(pid)) newSet.add(pid);
-        }
-      });
-      return newSet;
-    });
-  }, [playerId, pathNodes]);
-
   // Collapse (close) a team node by removing its teammates
   const collapseTeamRoster = useCallback((teamId: number, season: string) => {
     const teamSeasonId = `team-${teamId}-${season}`;
@@ -464,6 +328,19 @@ export default function NbaGraph({ initialPlayerId, pathMode = false }: NbaGraph
     
     if (pathMode) {
       // Path mode: collapse siblings at the same level
+      // Create helpers object inline to avoid dependency issues
+      const pathModeHelpers = {
+        nodesRef,
+        linksRef,
+        setNodes,
+        setLinks,
+        pathNodes,
+        setPathNodes,
+        setLoadedTeamSeasons,
+        setExpandedPlayers,
+        playerId,
+      };
+      
       if (graphNode.type === 'player' && graphNode.playerId) {
         const playerNodeId = `player-${graphNode.playerId}`;
         // Add to clicked players set
@@ -471,7 +348,7 @@ export default function NbaGraph({ initialPlayerId, pathMode = false }: NbaGraph
         // Add to path
         setPathNodes(prev => new Set([...prev, playerNodeId]));
         // Collapse all other players' teams first
-        collapseSiblingPlayers(graphNode.playerId);
+        collapseSiblingPlayers(graphNode.playerId, pathModeHelpers);
         // Then load this player's teams
         loadPlayerSeasons(graphNode.playerId);
       }
@@ -483,7 +360,7 @@ export default function NbaGraph({ initialPlayerId, pathMode = false }: NbaGraph
         // Add to path
         setPathNodes(prev => new Set([...prev, teamSeasonId]));
         // Collapse all other teams from the same parent player first
-        collapseSiblingTeams(teamSeasonId);
+        collapseSiblingTeams(teamSeasonId, pathModeHelpers);
         // Then load this team's roster
         loadTeamRoster(graphNode.teamId, graphNode.season, graphNode.teamAbbr);
       }
@@ -511,7 +388,7 @@ export default function NbaGraph({ initialPlayerId, pathMode = false }: NbaGraph
         }
       }
     }
-  }, [pathMode, loadPlayerSeasons, loadTeamRoster, loadedTeamSeasons, collapseTeamRoster, lastClickedTeamSeasonId, collapseSiblingPlayers, collapseSiblingTeams]);
+  }, [pathMode, loadPlayerSeasons, loadTeamRoster, loadedTeamSeasons, collapseTeamRoster, lastClickedTeamSeasonId, pathNodes, playerId]);
 
   const nodeColor = useCallback((node: any) => {
     const graphNode = node as GraphNode;
@@ -533,6 +410,33 @@ export default function NbaGraph({ initialPlayerId, pathMode = false }: NbaGraph
     return graphNode.label || graphNode.id;
   }, []);
 
+  // Reset function: clear everything and go back to just the starting player
+  const handleReset = useCallback(() => {
+    const playerName = playerNames[playerId] || `Player ${playerId}`;
+    const playerNode: GraphNode = {
+      id: `player-${playerId}`,
+      type: 'player',
+      label: playerName,
+      playerId,
+      playerName,
+    };
+    setNodes([playerNode]);
+    setLinks([]);
+    setExpandedPlayers(new Set());
+    setLoadedTeamSeasons(new Set());
+    setClickedPlayers(new Set());
+    setLastClickedTeamSeasonId(null);
+    setPathNodes(new Set([`player-${playerId}`]));
+    setSelectedNode(null);
+  }, [playerId, playerNames]);
+
+  // Go back function: disabled - backtracking not supported with Set-based path tracking
+  const handleGoBack = useCallback(() => {
+    // Backtracking requires ordered tracking (array), but we're using Set for pathNodes
+    // This function is disabled
+    return;
+  }, [pathMode]);
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-screen">
@@ -543,6 +447,26 @@ export default function NbaGraph({ initialPlayerId, pathMode = false }: NbaGraph
 
   return (
     <div className="w-full h-screen relative bg-white">
+      {/* Control buttons */}
+      <div className="absolute top-4 right-4 z-10 flex gap-2">
+        <button
+          onClick={handleGoBack}
+          disabled={!pathMode || pathNodes.size <= 1}
+          className={`px-3 py-2 text-xs font-medium rounded transition-colors ${
+            !pathMode || pathNodes.size <= 1
+              ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
+              : 'bg-blue-600 text-white hover:bg-blue-700'
+          }`}
+        >
+          ← Back
+        </button>
+        <button
+          onClick={handleReset}
+          className="px-3 py-2 text-xs font-medium rounded bg-red-600 text-white hover:bg-red-700 transition-colors"
+        >
+          Reset
+        </button>
+      </div>
       <ForceGraph2D
         ref={graphRef}
         graphData={{ nodes, links }}
