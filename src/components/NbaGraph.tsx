@@ -95,7 +95,7 @@ export default function NbaGraph({ initialPlayerId, pathMode = false }: NbaGraph
       
       const careerData: PlayerCareerRecord[] = await response.json();
       
-      // Get unique seasons, sorted by most recent, take last 3
+      // Get unique seasons, sorted by most recent (no limit)
       const uniqueSeasons = Array.from(
         new Map(
           careerData.map(record => [
@@ -104,8 +104,7 @@ export default function NbaGraph({ initialPlayerId, pathMode = false }: NbaGraph
           ])
         ).values()
       )
-        .sort((a, b) => b.SEASON_ID.localeCompare(a.SEASON_ID))
-        .slice(0, 3); // Last 3 seasons only
+        .sort((a, b) => b.SEASON_ID.localeCompare(a.SEASON_ID)); // All seasons, sorted by most recent
 
       // Get current nodes to check which team-seasons already exist
       setNodes(prevNodes => {
